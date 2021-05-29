@@ -1,0 +1,6 @@
+dist/
+build/
+nvme.egg-info/
+venv/
+*.so
+__pycache__/
