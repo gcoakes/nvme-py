@@ -3,6 +3,13 @@ from fcntl import ioctl
 from collections import namedtuple
 
 
+NVME_IOCTL_ADMIN_CMD = 0xC0484E41
+NVME_IOCTL_IO_CMD = 0xC0484E43
+
+
+CmdResult = namedtuple("CmdResult", "status, data, metadata")
+
+
 class Cmd(LittleEndianStructure):
     _fields_ = [
         ("opcode", c_uint8),
@@ -65,49 +72,35 @@ class Cmd(LittleEndianStructure):
         if addr is None:
             if data_len > 0:
                 # Keep a reference alive in pure python.
-                self._addr = create_string_buffer(data_len)
-                self.addr = c_uint64(addressof(self._addr))
+                self._data_buf = create_string_buffer(data_len)
+                self.addr = c_uint64(addressof(self._data_buf))
             else:
+                self._data_buf = None
                 self.addr = 0
         else:
+            self._data_buf = None
             self.addr = addr
         self.data_len = data_len
 
         if metadata is None:
             if metadata_len > 0:
                 # Keep a reference alive in pure python.
-                self._metadata = create_string_buffer(metadata_len)
-                self.metadata = c_uint64(addressof(self._metadata))
+                self._metadata_buf = create_string_buffer(metadata_len)
+                self.metadata = c_uint64(addressof(self._metadata_buf))
             else:
+                self._metadata_buf = None
                 self.metadata = 0
         else:
+            self._metadata_buf = None
             self.metadata = metadata
         self.metadata_len = metadata_len
 
+    def submit(self, req, dev):
+        status = ioctl(dev.fileno(), req, self)
+        return CmdResult(status, self._data_buf, self._metadata_buf)
 
-CmdResult = namedtuple("CmdResult", "status, data, metadata")
+    def submit_admin(self, dev):
+        return self.submit(NVME_IOCTL_ADMIN_CMD, dev)
 
-
-NVME_IOCTL_ADMIN_CMD = 0xC0484E41
-NVME_IOCTL_IO_CMD = 0xC0484E43
-
-
-def submit_cmd(req, dev, cmd):
-    status = ioctl(dev.fileno(), req, cmd)
-    if cmd.addr:
-        data = (c_char * cmd.data_len).from_address(cmd.addr).value
-    else:
-        data = None
-    if cmd.metadata:
-        (c_char * cmd.metadata_len).from_address(cmd.metadata).value
-    else:
-        metadata = None
-    return CmdResult(status, data, metadata)
-
-
-def admin_cmd(dev, cmd):
-    return submit_cmd(NVME_IOCTL_ADMIN_CMD, dev, cmd)
-
-
-def io_cmd(dev, cmd):
-    return submit_cmd(NVME_IOCTL_IO_CMD, dev, cmd)
+    def submit_io(self, dev):
+        return self.submit(NVME_IOCTL_IO_CMD, dev)
